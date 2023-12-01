@@ -1,5 +1,6 @@
 import os
 import pickle
+from bs4 import BeautifulSoup
 # Gmail API utils
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -14,10 +15,8 @@ from email.mime.audio import MIMEAudio
 from email.mime.base import MIMEBase
 from mimetypes import guess_type as guess_mime_type
 
-# Request all access (permission to read/send/receive emails, manage the inbox, and more)
-SCOPES = ['https://mail.google.com/']
-our_email = 'emanuele.stefani.geo@gmail.com'
-
+# A variable that the program need to not note if there's a file twice
+noted = False
 
 def gmail_authenticate():
     creds = None
@@ -72,13 +71,10 @@ def search_messages(service, query):
     return messages
 
 
-def parse_parts(service, parts, folder_name, message):
+def parse_parts(service, parts, file_name, message):
     """
-    Utility function that parses the content of an email partition
+    Utility function that parses the content of an email partition and save it on a file
     """
-
-    print (parts)
-
     if parts:
         for part in parts:
             filename = part.get("filename")
@@ -90,52 +86,41 @@ def parse_parts(service, parts, folder_name, message):
             if part.get("parts"):
                 # recursively call this function when we see that a part
                 # has parts inside
-                parse_parts(service, part.get("parts"), folder_name, message)
+                parse_parts(service, part.get("parts"), file_name, message)
             if mimeType == "text/plain":
-                # if the email part is text plain
-                if data:
-                    text = urlsafe_b64decode(data).decode()
+                # it had to print the text, but i just need to save it
+                pass
             elif mimeType == "text/html":
                 # if the email part is an HTML content
-                # save the HTML file and optionally open it in the browser
-                if not filename:
-                    filename = "index.html"
-                filepath = os.path.join(folder_name, filename)
-                print("Saving HTML to", filepath)
-                with open(filepath, "wb") as f:
-                    f.write(urlsafe_b64decode(data))
-            else:
-                # attachment other than a plain text or HTML
-                for part_header in part_headers:
-                    part_header_name = part_header.get("name")
-                    part_header_value = part_header.get("value")
-                    if part_header_name == "Content-Disposition":
-                        if "attachment" in part_header_value:
-                            # we get the attachment ID
-                            # and make another request to get the attachment itself
-                            print("Saving the file:", filename, "size:", get_size_format(file_size))
-                            attachment_id = body.get("attachmentId")
-                            attachment = service.users().messages() \
-                                        .attachments().get(id=attachment_id, userId='me', messageId=message['id']).execute()
-                            data = attachment.get("data")
-                            filepath = os.path.join(folder_name, filename)
-                            if data:
-                                with open(filepath, "wb") as f:
-                                    f.write(urlsafe_b64decode(data))
+                # convert HTML to txt and save it in the file
+                old_path = os.path.join("Emails", "raw.txt")
+                filepath = os.path.join("Emails", f"{file_name}.txt")
+                os.rename(old_path, filepath)
 
+                text = urlsafe_b64decode(data).decode()
+                soup = BeautifulSoup(text, 'html.parser')
+                with open(filepath, "a") as f:
+                    f.write(soup.get_text())
+            else:
+                # write at the end of the file a note if it's present one or more attachment
+                filepath = os.path.join("Emails", f"{file_name}.txt")
+                with open(filepath, "a") as f:
+                    global noted
+                    if not noted:
+                        f.write("Nota: Sono presenti uno o piu' allegati")
+                        noted = True
 
 def read_message(service, message):
     """
     This function takes Gmail API `service` and the given `message_id` and does the following:
         - Downloads the content of the email
-        - Prints email basic information (To, From, Subject & Date) and plain/text parts
-        - Creates a folder for each email based on the subject
-        - Downloads text/html content (if available) and saves it under the folder created as index.html
-        - Downloads any file that is attached to the email and saves it in the folder created
+        - Marks the email as read
+        - Downloads text/html content (if available) and saves in the "Emails" folder in txt format
+        - Sign on the file if there's one or more attachments
     """
     msg = service.users().messages().get(userId='me', id=message['id'], format='full').execute()
 
-    # it mark the email that download as read
+    # it mark the email that has been downloaded as read
     service.users().messages().batchModify(
         userId='me',
         body={
@@ -144,49 +129,55 @@ def read_message(service, message):
         }
     ).execute()
 
+    global noted
+    noted = False
+
     # parts can be the message body, or attachments
     payload = msg['payload']
     headers = payload.get("headers")
     parts = payload.get("parts")
 
     if headers:
-        # this section prints email basic info & creates a folder for the email
+        # save the email's content in a file
         for header in headers:
             name = header.get("name")
             value = header.get("value")
 
             if name.lower() == 'from':
-                # we print the From address
-                print("From:", value)
+                # create the txt file and save from whom the email is
+                filepath = os.path.join("Emails", f"raw.txt")
+                with open(filepath, "x") as f:
+                    f.write(f"Da: {value} \n")
 
             if name.lower() == "to":
+                # The emails are usually sent to me so idc about it
                 pass
 
             if name.lower() == "subject":
-                # make a directory with the name of the subject, if there's no subject name it Subject_missing
+                # save the new name of the file based on the subject
+                # if there's no subject, name it Subject_missing
                 if clean(value) == '':
-                    folder_name = "Subject_missing"
+                    file_name = "Subject_missing.txt"
                 else:
-                    folder_name = clean(value)
+                    file_name = clean(value)
                 # we will also handle emails with the same subject name
-                folder_counter = 0
-                while os.path.isdir(folder_name):
-                    folder_counter += 1
-                    # we have the same folder name, add a number next to it
-                    if folder_name[-1].isdigit() and folder_name[-2] == "_":
-                        folder_name = f"{folder_name[:-2]}_{folder_counter}"
-                    elif folder_name[-2:].isdigit() and folder_name[-3] == "_":
-                        folder_name = f"{folder_name[:-3]}_{folder_counter}"
+                file_counter = 0
+                filepath = os.path.join("Emails", f"{file_name}.txt")
+                while os.path.isfile(filepath):
+                    file_counter += 1
+                    # we have the same file name, add a number next to it
+                    if file_name[-1].isdigit() and file_name[-2] == "_":
+                        file_name = f"{file_name[:-2]}_{file_counter}"
+                    elif file_name[-2:].isdigit() and file_name[-3] == "_":
+                        file_name = f"{file_name[:-3]}_{file_counter}"
                     else:
-                        folder_name = f"{folder_name}_{folder_counter}"
-                os.mkdir(folder_name)
-                print("Subject:", value)
+                        file_name = f"{file_name}_{file_counter}"
+                    filepath = os.path.join("Emails", f"{file_name}.txt")
 
             if name.lower() == "date":
-                # we print the date when the message was sent
-                print("Date:", value)
-    parse_parts(service, parts, folder_name, message)
-    print("="*50)
+                # I don't care about the date
+                pass
+    parse_parts(service, parts, file_name, message)
 
 
 def main():
@@ -200,7 +191,6 @@ def main():
     # for each email matched, read it (output plain/text to console & save HTML and attachments)
     for msg in results:
         read_message(service, msg)
-
 
 
 if __name__ == '__main__':
