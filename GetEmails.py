@@ -14,6 +14,9 @@ from email.mime.image import MIMEImage
 from email.mime.audio import MIMEAudio
 from email.mime.base import MIMEBase
 from mimetypes import guess_type as guess_mime_type
+from time import sleep
+
+SCOPES = ['https://mail.google.com/']
 
 # A variable that the program need to not note if there's a file twice
 noted = False
@@ -194,4 +197,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    while(True):
+      main()
+      sleep(3600)
