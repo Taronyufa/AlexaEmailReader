@@ -188,7 +188,7 @@ def main():
     service = gmail_authenticate()
 
     # get emails that match the query you specify
-    results = search_messages(service, "from:federico@geostefani.net is:unread")
+    results = search_messages(service, "query")
     print(f"Found {len(results)} results.")
 
     # for each email matched, read it (output plain/text to console & save HTML and attachments)
@@ -197,6 +197,6 @@ def main():
 
 
 if __name__ == '__main__':
-    while(True):
-      main()
-      sleep(3600)
+    # while(True):
+    main()
+      # sleep(3600)
